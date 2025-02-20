@@ -1,0 +1,161 @@
+---
+title: "Interactive_Mini_Project_One_Olson"
+format: html
+---
+
+**This document represents the work completed in order to achieve interactive plots using Leaflet. I have attached the initial set-up for the plots under the first section. I will leave the interpretation for the interactive plots in the original pdf while also attaching it in here as well.**
+
+#Initial Set-up for Interactive Plots
+```{r}
+#load packages
+library(readr)
+library(tidyverse)
+library(leaflet)
+library(htmltools)
+library(glue)
+library(maps)
+library(viridis)
+library(sf)
+
+#dataset
+US_Leading_Death <- read_csv("/Users/rachaelolson/Desktop/SDS 264/NCHS_Leading_Causes_of_Death_US.csv")
+US_Leading_Death
+```
+
+```{r}
+#adjusting the dataset to look into specific areas
+states_adjust_death <- US_Leading_Death |>
+  rename(Age_Adjust_Death_Rate = `Age-adjusted Death Rate`) |>
+  select(State, Age_Adjust_Death_Rate, Year) |>
+  filter(!(State %in% c("Alaska","Hawaii","District of Columbia","United States"))) |> 
+  mutate(State = str_to_lower(State)) |>
+  filter(Year == "2017") |>
+  group_by(State) |> 
+  summarize(avg_age_adj_death = mean(Age_Adjust_Death_Rate)) #mean of death rate for each state
+```
+
+```{r}
+state_sf <- read_sf("https://rstudio.github.io/leaflet/json/us-states.geojson")  #<2>
+class(state_sf) #<3>
+state_sf
+
+#Making bins for density
+state_sf <- state_sf |>
+  mutate(density_intervals = cut(density, n = 8,
+          breaks = c(90, 100, 110, 120, 130, 140, 150, Inf))) |>
+  filter(!(name %in% c("Alaska", "Hawaii", "District of Columbia","United States"))) |>
+  rename(State = `name`) |>
+  mutate(State = str_to_lower(State)) 
+```
+
+```{r}
+leading_death_cause <- US_Leading_Death |>
+  rename(cause_name = `Cause Name`) |>
+  filter(!(State %in% c("Alaska","District of Columbia","United States"))) |>
+  filter(!(cause_name %in% c("All causes"))) |>
+  group_by(State, cause_name) |>
+  summarize(total_deaths = sum(Deaths, na.rm = TRUE)) |>
+  group_by(State) |>
+  slice_max(total_deaths, n = 1) |>
+  ungroup() |>
+  mutate(State = str_to_lower(State))
+```
+
+
+#Plot two: Interactive Plot of Age-Adjusted Death Across U.S. States
+
+```{r}
+#Create bins and color palette
+bins <-  c(90, 100, 110, 120, 130, 140, 150, Inf)
+pal <- colorBin("RdYlBu", domain = state_sf$density, bins = bins)
+
+#Merge the states dataset with the original dataset
+merge_states <- right_join(state_sf, states_adjust_death, by ="State")
+
+
+#Hover labels
+merge_states <- merge_states |>
+  filter(!is.na(avg_age_adj_death)) |>
+  mutate(State = str_to_title(State)) |>
+  mutate(labels = str_c(State, ": ", round(avg_age_adj_death,2), " per 100,000 people"))
+
+labels <- lapply(merge_states$labels, HTML)
+
+#creation of interactive plot
+leaflet(merge_states) |>
+  setView(-96, 37.8, 3.5) |> #set initial view
+  addTiles() |>
+  addPolygons( #polygons for each state
+    dashArray = "",
+    fillColor = ~colorNumeric("RdYlBu", domain = merge_states$avg_age_adj_death)(merge_states$avg_age_adj_death),
+    weight = 3,
+    opacity = 2,
+    color = "white",
+    fillOpacity = 0.8,
+    highlightOptions = highlightOptions( #add highlight while hovering
+      weight = 4,
+      color = "666",
+      dashArray = "",
+      fillOpacity = 0.7,
+      bringToFront = TRUE),
+    label = labels,
+    labelOptions = labelOptions( #label appearance
+      style = list("font-weight" = "normal", padding = "3px 8px"),
+      textsize = "15px",
+      direction = "auto")) |>
+  addLegend(pal = pal,
+            values = ~avg_age_adj_death, 
+            opacity = 0.7, 
+            title = NULL, 
+            position = "bottomright")
+```
+
+**This interactive plot, again, shows a comparison between age-adjusted death rate and their respective state. West Virginia and Mississippi have the highest age-adjusted death rate. While California and New York have the lowest age-adjusted death rate. The general area of the South has appears to have a higher age-adjusted death rate, while the West appears to be leaning more towards a lower age-adjusted death rate.**
+*Note: This data was sourced from the U.S. Department of Health & Human Services; catalog.data.gov/dataset/nchs-leading-causes-of-death-united-states.*
+
+
+#Plot Four: Interactive Plot of the Apparent Leading Cause of Death in Each State
+```{r}
+merge_lead_states <- right_join(state_sf, leading_death_cause, by ="State")
+
+merge_lead_states <- merge_lead_states |>
+  mutate(State = str_to_title(State)) |>
+  mutate(leading_labels = str_c(State, "'s leading cause of death is ", cause_name,
+                                "<br> with  the total number being ", total_deaths, " people." ))
+
+
+leading_labels <- lapply(merge_lead_states$leading_labels, HTML)
+
+bins <- c(0, 1500, 5000, 10000, 50000, 100000, 500000, 1000000, Inf)
+palet <- colorBin("RdYlBu", domain = merge_lead_states$total_deaths, bins = bins)
+
+
+leaflet(merge_lead_states) |>
+  setView(-96, 37.8, 4) |>
+  addTiles() |>
+  addPolygons(
+    fillColor = ~palet(total_deaths),
+    weight = 3,
+    opacity = 3,
+    color = "white",
+    dashArray = "3",
+    fillOpacity = 0.7,
+    highlightOptions = highlightOptions(
+      weight = 7,
+      color = "#666",
+      dashArray = "",
+      fillOpacity = 0.9,
+      bringToFront = TRUE),
+    label = leading_labels,
+    labelOptions = labelOptions(
+      style = list("font-weight" = "normal", padding = "3px 8px"),
+      textsize = "15px",
+      direction = "auto")) 
+```
+
+**This interactive map demonstrates the leading cause of death in a new light. It is associated with the number of people who have sadly passed from the state's leading cause of death. Observe that heart disease in California has affected over a million people since 1999 to 2017. Now, this plot does not account for the number of people in each state, however, it does represent the souls who have sadly passed from each disease in each state. Furthering the need for research to be conducted for these causes within each state as they are more and more prevalent among their citizens.**
+*Note: This data was sourced from the U.S. Department of Health & Human Services; catalog.data.gov/dataset/nchs-leading-causes-of-death-united-states.*
+
+
+
+*Note*: **I have attached the introduction, the two static plots, the interpretation for all plots, conclusion, and the references in the pdf version. **
